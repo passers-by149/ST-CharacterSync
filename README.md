@@ -18,7 +18,7 @@
 将 `character_sync` 文件夹（包含 `index.js`、`manifest.json`、`style.css`）复制到：
 
 ```
-SillyTavern/data/<用户名>/extensions/character_sync/
+data/default-user/extensions/ST-CharacterSync/
 ```
 
 ## 使用方法

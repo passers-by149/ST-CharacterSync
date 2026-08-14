@@ -200,8 +200,9 @@ async function applyApiByName(apiName) {
             || (await import('/scripts/slash-commands/SlashCommandParser.js')).SlashCommandParser;
         const cmd = SlashCommandParser.commands?.['profile'];
         if (cmd && typeof cmd.callback === 'function') {
-            console.log(`[${DISPLAY_NAME}] Switching API via /profile "${apiName}" with await=true`);
-            await cmd.callback({ await: 'true' }, apiName);
+            console.log(`[${DISPLAY_NAME}] Switching API via /profile "${apiName}" (non-blocking)`);
+            // 不传 await=true，避免阻塞主线程等待连接建立
+            await cmd.callback({}, apiName);
             console.log(`[${DISPLAY_NAME}] API → "${apiName}" (via /profile command)`);
             return true;
         }
@@ -230,7 +231,7 @@ async function applyApiByName(apiName) {
     if (typeof ctx.executeSlashCommandsWithOptions === 'function') {
         try {
             console.log(`[${DISPLAY_NAME}] Trying executeSlashCommandsWithOptions /profile "${apiName}"`);
-            await ctx.executeSlashCommandsWithOptions(`/profile await=true ${apiName}`, { showOutput: false });
+            await ctx.executeSlashCommandsWithOptions(`/profile ${apiName}`, { showOutput: false });
             console.log(`[${DISPLAY_NAME}] API → "${apiName}" (via executeSlashCommandsWithOptions)`);
             return true;
         } catch (e) {
@@ -245,7 +246,24 @@ async function applyApiByName(apiName) {
 // ============================================================
 // 主切换逻辑
 // ============================================================
+let _csyncLastApplyTime = 0;
+
 async function applyCharacterBindings() {
+    // 去重：同一秒内不重复执行
+    const now = Date.now();
+    if (now - _csyncLastApplyTime < 1000) {
+        console.log(`[${DISPLAY_NAME}] Throttled (last call ${now - _csyncLastApplyTime}ms ago)`);
+        return;
+    }
+    _csyncLastApplyTime = now;
+
+    // 页面刚从后台恢复时跳过（visibilitychange 可能触发 CHAT_CHANGED）
+    if (_csyncJustResumed) {
+        console.log(`[${DISPLAY_NAME}] Page just resumed from background, skipping`);
+        _csyncJustResumed = false;
+        return;
+    }
+
     const settings = getSettings();
     const bot = getCurrentBot();
     if (!bot) {
@@ -267,7 +285,6 @@ async function applyCharacterBindings() {
 
     if (!binding) {
         // 无绑定，但也需要清理该角色之前可能锁定的背景
-        // （如果 switchBackground 关闭，之前锁定的背景不应该被恢复）
         if (!settings.switchBackground) {
             clearBackgroundLock();
         }
@@ -284,12 +301,12 @@ async function applyCharacterBindings() {
     if (settings.switchBackground && binding.background) {
         await applyBackgroundByName(binding.background);
     } else if (binding.background) {
-        // 背景切换开关关闭，但该角色有绑定背景 → 清理 lock 防止原生代码恢复
         clearBackgroundLock();
     }
 
     if (settings.switchApi && binding.api) {
-        await applyApiByName(binding.api);
+        // API 切换不阻塞主线程，放 nextTick 异步执行
+        setTimeout(() => applyApiByName(binding.api), 0);
     }
 }
 
@@ -662,9 +679,19 @@ async function refreshSettingsPanel() {
 // ============================================================
 // 初始化
 // ============================================================
+let _csyncJustResumed = false;
+
 function init() {
     console.log(`[${DISPLAY_NAME}] Initializing...`);
     tryMountPanel();
+
+    // 监听页面从后台恢复，标记跳过本次 CHAT_CHANGED
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            _csyncJustResumed = true;
+            console.log(`[${DISPLAY_NAME}] Page became visible, will skip next CHAT_CHANGED`);
+        }
+    });
 
     const ctx = SillyTavern.getContext();
     if (ctx.eventSource && ctx.eventTypes) {
@@ -694,16 +721,34 @@ function init() {
         }
     }
 
-    let retries = 0;
-    const retryInterval = setInterval(() => {
-        if (document.getElementById('csync-settings')) {
-            clearInterval(retryInterval);
-            return;
-        }
-        tryMountPanel();
-        retries++;
-        if (retries > 20) clearInterval(retryInterval);
-    }, 1000);
+    // 用 MutationObserver 替代 setInterval 轮询，避免后台积压
+    const target = document.getElementById('extensions_settings2');
+    if (target) {
+        const observer = new MutationObserver(() => {
+            if (!document.getElementById('csync-settings')) {
+                tryMountPanel();
+            }
+        });
+        observer.observe(target, { childList: true, subtree: true });
+        // 兜底：5 秒后如果还没挂载成功，再试一次
+        setTimeout(() => {
+            if (!document.getElementById('csync-settings')) {
+                tryMountPanel();
+            }
+        }, 5000);
+    } else {
+        // 如果 #extensions_settings2 还不存在，设置一个短轮询（最多 10 次）
+        let retries = 0;
+        const retryInterval = setInterval(() => {
+            if (document.getElementById('csync-settings')) {
+                clearInterval(retryInterval);
+                return;
+            }
+            tryMountPanel();
+            retries++;
+            if (retries > 10) clearInterval(retryInterval);
+        }, 2000);
+    }
 }
 
 async function tryMountPanel() {

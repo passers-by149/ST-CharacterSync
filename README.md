@@ -13,13 +13,15 @@
 
 ## 安装
 
-### 手动安装
+### 手动和在线安装
 
 将 `character_sync` 文件夹（包含 `index.js`、`manifest.json`、`style.css`）复制到：
 
 ```
 data/default-user/extensions/ST-CharacterSync/
 ```
+
+或者输入https://github.com/passers-by149/ST-CharacterSync 在线安装
 
 ## 使用方法
 

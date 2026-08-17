@@ -1,0 +1,13 @@
+{
+  "display_name": "Character Sync",
+  "loading_order": 100,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Trae",
+  "version": "1.3.1",
+  "homePage": "https://github.com/passers-by149/ST-CharacterSync",
+  "auto_update": false,
+  "minimum_client_version": "1.12.0"
+}
